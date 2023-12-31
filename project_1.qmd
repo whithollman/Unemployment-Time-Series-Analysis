@@ -1,0 +1,1062 @@
+---
+title: "project_1"
+author: "Whitney Hollman"
+format: 
+  html:
+    code-fold: true
+    code-line-numbers: true
+    code-tools: true
+editor: visual
+embed-resources: true
+
+---
+#knitr kable()
+#can add a caption to the table using kable_styling()
+#gt is the best for styling. 
+
+```{r}
+#| label: libraries used
+
+options(scipen = 999)
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+library(discrim)
+library(rpart)
+library(rpart.plot)
+library(baguette)
+library(kernlab)
+library(janitor)
+library(here)
+library(parsnip)
+library(kknn)
+```
+
+## Unemployment in the U.S.
+
+Dataset from kaggle.com
+
+```{r}
+unemployment <- read.csv(here("Project_1", "Unemployment in America Per US State.csv"))
+```
+
+
+# **Context**
+
+#### What is the primary goal of this data analysis project?
+
+Primary goal is unemployment rates used as a time series data set from 1976 to 2022 to predict homelessness in the United States, and the states with consistent higher rates of unemployment also have larger non institutional populations. 
+
+#### What are some secondary goals of this data analysis project?
+
+The hope that the findings will help bring awareness of high or low employment rates, and what areas of the country are affected the most, etc.
+
+#### Who is the target audience of this project? (Do not think of this as an academic paper. Instead, choose specific organizations or companies that you think might be interested in your results.)
+
+State government labor offices, Companies with high unemployment rates.
+
+#### How will the results of this project be used by the target audience?
+
+If the data is able to predict future outcomes of the correlation between homelessness and unemployment, then a community outreach should be formed in these highly predictive areas in order to improve the lives of the persons who are destabilized economically. The roll of the government should be to create jobs that target the skills of the unemployed, etc.
+
+# **Data Understanding & Previous Work**
+
+#### Provide links our citations to the datasets you plan to use.
+
+<https://www.kaggle.com/datasets/justin2028/unemployment-in-america-per-us-state/>
+
+#### Who are the data providers?
+
+Data was taken from the Bureau of Labor Statistics, and complied by Jason Oh the author of the data set on Kaggle.
+
+#### What do their organizations do?
+
+Government
+
+#### Why did they create these datasets?
+
+The dataset was created because the author believed that unemployment is significant issue in America. This issue contributes directly to the homelessness crisis. The author stated that by achieving quantitative, yet objective, viewpoints of a subject such as homelessness is crucial to be able to understand current issues in in America.
+
+#### How was the data collected?
+
+Data was compiled directly from Bureau of Labor Statistics by the author. The dataset tracks relevant population statistics and employment rates per US state, since 1976.
+
+1.  [The Bureau of Labor Statistics's Economic News Release on (Monthly) State Employment and Unemployment](https://www.bls.gov/web/laus.supp.toc.htm) - The Bureau of Labor Statistics has published monthly updates on unemployment rates since January 1976
+2.  [The Bureau of Labor Statistics's State Employment and Unemployment Technical Note](https://www.bls.gov/news.release/laus.tn.htm) - The Bureau of Labor Statistics released a detailed overview of their unemployment data, the methodology behind their data, and the proper definitions and terminologies for the variables tracked. The guide mainly provided essential contextual knowledge needed to create a meaningful dataset
+
+#### What are the cases, i.e., the rows of the datasets?
+
+Rows are numerical.
+
+#### What variables will you most likely use as your target variables? What do these variables measure, and how are they quantified?
+
+State. Year.
+
+#### What variables will you consider using as predictors? What do these variables measure, and how are they quantified?
+
+Total unemployment by state. Total employment by state.
+
+#### What data cleaning or manipulation might be necessary to prepare this data for modeling?
+
+Renaming for ease of analysis. Quick plots, and linear regression, summary, counting, etc to get a better handle of the data.
+
+# Exploratory Analysis
+
+## Statistics Being Tracked
+
+Column Names and Variables:
+
+-   FIPS Code of State/Area(Federal Information Processing. Unique codes for states and counties, that are uniquely identified geographically).
+
+-   Year/Month of Statistic
+
+-   Total Civilian Non-Institutional Population in State/Area (All U.S. civilians not residing in institutional group quarters facilities such as correctional institutions, juvenile facilities, skilled nursing facilities, and other long-term care living arrangements. Are unemployed but looking for work)
+
+-   Total Civilian Labor Force in State/Area
+
+-   Percent (%) of State/Area's Population
+
+-   Total Employment in State/Area
+
+-   Percent (%) of Labor Force Employed in State/Area
+
+-   Total Unemployment in State/Area
+
+-   Percent (%) of Labor Force Unemployed in State/Area
+
+#### Data Cleaning
+
+```{r}
+unemployment <- read.csv(here("Project_1", "Unemployment in America Per US State.csv"))
+```
+
+```{r, dataset does not have any missing values}
+if(any(is.na(unemployment))) {
+  pring("There are non-finite values in the data set.")
+} else {
+  print("There are no non-finite values in the data set.")}
+```
+
+```{r, package janitor to rename columns}
+
+unemployment <- unemployment %>%
+  clean_names()
+```
+
+
+```{r}
+#| label: check classes
+sapply(unemployment, class)
+
+clean_unemployment <- unemployment %>%
+  select(-month) 
+
+# Switch year to numeric for ggplots
+clean_unemployment$year <- as.numeric(clean_unemployment$year)
+  
+```
+I mutated the month and year into one column called state_date, that will essentially allow me to use time series analysis on the data set.
+
+```{r}
+#| label: Understanding the data
+# FIPS code above 52 is for counties remove New York City
+# Left Los Angeles County in the data set because it is the most populous county in the United States, and the size of some entire state populations. Another reason for keeping it is because removing it increased noise in some plots.
+
+clean_unemployment <- clean_unemployment %>%
+  filter(fips_code != 51000)
+
+clean_unemployment %>%
+  select(state_area, fips_code) %>%
+  distinct()
+```
+I removed the New York City FIPS code because it is not a state, and it is not a county. It is a city. The FIPS code for New York City is 51000. For example, the FIPS code for New York State is 36. The FIPS code for New York County is 36061. The FIPS code for Kings County is 36047. The FIPS code for Queens County is 36081. The FIPS code for Bronx County is 36005. The FIPS code for Richmond County is 36085.
+
+
+```{r}
+#| label: variable relationships
+clean_unemployment[1:6,] %>%
+  get_one_to_one()
+```
+
+```{r}
+#| label: remove commas from integer columns, keeping character column
+  
+#Function for removing and converting all columns
+remove_commas_and_convert_to_numeric <- function(x) {
+ as.numeric(gsub(",", "", x))
+}
+
+clean_unemployment <- clean_unemployment %>%
+  mutate(across(starts_with("total"), remove_commas_and_convert_to_numeric))
+```
+
+```{r}
+#| label: create state regions
+
+clean_unemployment$region <- case_when(
+   clean_unemployment$state_area %in% c("California", "Los Angeles County", "Oregon", "Washington", "Arizona", "Colorado", "Idaho", "Montana", "Nevada", "New Mexico", "Montana", "Wyoming", "Alaska", "Hawaii", "Utah") ~ "West",
+  clean_unemployment$state_area %in% c("North Dakota", "South Dakota", "Nebraska", "Kansas", "Minnesota", "Iowa", "Missouri", "Wisconsin", "Michigan", "Illinois", "Indiana", "Ohio") ~ "Midwest",
+  clean_unemployment$state_area %in% c("Texas", "Oklahoma", "Arkansas", "Louisiana", "Mississippi", "Alabama", "Georgia", "Florida", "South Carolina", "North Carolina", "Virginia", "Tennessee", "Kentucky", "Delaware", "Maryland", "Washington D.C.", "West Virginia", "District of Columbia") ~ "South",
+  clean_unemployment$state_area %in% c("Connecticut", "Maine", "Massachusetts", "New Hampshire", "Rhode Island", "Vermont", "New Jersey", "Pennsylvania", "New York") ~ "Northeast",
+  TRUE ~ "Other"
+)
+```
+
+```{r}
+#| label: create a column for percentage of non-institutional population in state area
+
+clean_unemployment <- clean_unemployment %>%
+  mutate(percentage_total_civilian_non_institutional_pop = round((total_civilian_non_institutional_population_in_state_area / sum(total_civilian_non_institutional_population_in_state_area)) * 100, 4)) 
+ 
+```
+
+```{r}
+#| label: move region column to the third column
+
+clean_unemployment <- clean_unemployment %>%
+  relocate(region, .after = state_area)
+```
+
+```{r}
+#| label: new column to show change in unemployment rate over time
+clean_unemployment <- clean_unemployment %>%
+  arrange(state_area, year) %>%
+  mutate(lagged_value = lag(total_unemployment_in_state_area),
+         percentage_change = 
+(total_unemployment_in_state_area - lagged_value)
+      /lagged_value * 100) %>%
+  drop_na(percentage_change)
+
+clean_unemployment$percentage_change <- 
+  round(clean_unemployment$percentage_change, 3)
+```
+
+```{r}
+
+```
+
+#### Descriptive Statistics and Visualizations
+
+```{r}
+#| label: Summary Statistics
+clean_unemployment %>%
+  summary()
+```
+
+
+Using summary statistics on four specific variables that I believe to be relevant to the analysis. This gives a brief overview on the similarities and differences between what I believe to be the most important variables.
+
+```{r}
+#| label: summary statistics for key variables(mean, median, sd, min, max)
+clean_unemployment %>%
+  select(total_civilian_non_institutional_population_in_state_area, total_unemployment_in_state_area, percent_of_labor_force_unemployed_in_state_area,
+         percent_of_state_area_s_population) %>%
+  summary()
+```
+##### Subsets for High and Low Unemployment rates per Region
+```{r}
+#| label: subset data for top 5 states with highest unemployment within each region
+# Average unemployment rate for each state
+
+average_unemployment <- clean_unemployment %>%
+  group_by(region) %>%
+  summarize(avg_unemployment = mean(total_unemployment_in_state_area),
+            avg_labor_force = mean(total_civilian_labor_force_in_state_area),
+     yearly_avg_unemployment = mean(percent_of_labor_force_unemployed_in_state_area),
+     avg_population = mean(total_civilian_labor_force_in_state_area))
+
+# Top 5 lowest and highest average
+
+top_5_highest <- average_unemployment %>%
+  top_n(5, wt = avg_unemployment)
+
+top_5_lowest <- average_unemployment %>%
+  arrange(avg_unemployment) %>%
+  slice(1:5)
+
+# Subset data for top 5 highest and lowest
+unemployment_high_unemployment <- clean_unemployment %>%
+  filter(region %in% top_5_highest$region) %>%
+  select(region, year, total_unemployment_in_state_area, total_civilian_labor_force_in_state_area) %>%
+  arrange(desc(year))
+  
+
+unemployment_low_unemployment <- clean_unemployment %>%
+  filter(region %in% top_5_lowest$region) 
+
+```
+
+```{r}
+#| label: visualize data with line graph
+
+clean_unemployment %>%
+  ggplot(mapping = aes(
+    x = total_civilian_non_institutional_population_in_state_area,
+    y = total_unemployment_in_state_area, color = total_civilian_non_institutional_population_in_state_area)) +
+  geom_point() +
+  geom_jitter() +
+  geom_line() +
+  labs(
+    x = "Total Civilian Non-Insitutional Population in State Area",
+    y = "Total Unemployment in State Area",
+    title = "Total Unemployment in State Area vs. Total Civilian Non-Instituional Population in State Area",
+    subtitle = "Line Graph",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+```
+
+```{r}
+#| label: visual with geompoint
+
+clean_unemployment %>%
+  ggplot(mapping = aes(
+    x = total_unemployment_in_state_area,
+    y = state_area)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    x = "Total Unemployment in State Area",
+    y = "State Area",
+    title = "Total Unemployment in State Area vs. FIPS Code",
+    subtitle = "Linear Regression Model",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+```
+
+```{r}
+#| label: visual with histogram and desnisty plot
+
+set.seed(1234)
+clean_unemployment %>%
+  ggplot(mapping = aes(
+    x = total_unemployment_in_state_area)) +
+  geom_histogram(aes(y = ..density..), bins = 20, fill = "lightblue", color = "black") +
+  geom_density(color = "blue") +
+  labs(
+    x = "Total Unemployment in State Area",
+    y = "Density",
+    title = "Total Unemployment in State Area",
+    subtitle = "Histogram and Density Plot",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+
+set.seed(1234)
+average_unemployment %>%
+  ggplot(mapping = aes(
+    x = avg_unemployment)) +
+  geom_histogram(aes(y = ..density..), bins = 20, fill = "lightblue", color = "black") +
+  geom_density(color = "red") +
+  labs(
+    x = "Average Unemployment for Each State",
+    y = "Density",
+    title = "States Average Unemployment",
+    subtitle = "Histogram and Density Plot of Current Unemployment",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+```
+Average unemployment seems to be decreasing over time for most of the states in the US. This is a good sign that the economy is improving. However, there are still some states that have a higher average unemployment rate than others. This could be due to a number of factors, such as the state's economy, the state's population, and the state's unemployment rate. 
+
+##### Explore Relationship Between Unemployment and Non-Institutional Population per State Area
+```{r}
+#| label: scatterplot to explore relationship between non-institutional population and unemployment
+
+clean_unemployment %>%
+  group_by(region) %>%
+  ggplot(aes(
+    x = total_civilian_non_institutional_population_in_state_area,
+    y = percent_of_labor_force_unemployed_in_state_area,
+    color = region)) +
+  geom_point(aes(year)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_jitter() +
+  labs(
+    x = "Total Civilian Non-Insitutional Population in State Area",
+    y = "Percent of Labor Force Unemployed in State Area",
+    title = "Percent of Labor Force Unemployed vs. Total Civilian Non-Instituional Population in State Area",
+    subtitle = "Linear Regression Model",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+
+clean_unemployment %>%
+  group_by(region) %>%
+  ggplot(aes(
+    x = total_civilian_labor_force_in_state_area,
+    y = total_unemployment_in_state_area,
+    color = region)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_jitter() +
+  labs(
+    x = "Total Civilian Labor Force in State Area",
+    y = "Total Unemployment in State Area",
+    title = "Total Civilian Labor Force vs. Total Unemployment") +
+  theme_minimal()
+```
+The more interesting relationship is between the total civilian non-institutional population in state area and the total unemployment in state area is that not only does the west have a higher probability of higher unemployment labor force, but also a higher non-institutional population. This could be due to the fact that the west has a higher population than the other regions.
+
+Furthermore, the second plot shows that the West and South have more significant changes in the data. With the West having a more positive slope and the South having a more negative slope. The Midwest and Northeast have a more neutral slope. Which means that in the Western States there is a positive relationship between unemployment and non institutional population. In the South there is a negative relationship between unemployment and non institutional population. In the Midwest and Northeast there is no relationship between unemployment and non institutional population. 
+
+##### Highest and Lowest Unemployment Over Time (2000-2019) per Region
+
+```{r}
+#| label: Non-Institutional Population vs. unemployment over years 1976-2019 for all four regions.
+
+# Unemployment Population
+ clean_unemployment %>%
+  filter(year >= 1980,
+         region %in% c('West', 'South','Midwest','Northeast')) %>%
+  ggplot(aes(
+    x = year,
+    y = total_unemployment_in_state_area,
+    color = region)) +
+  geom_point() +
+ #geom_smooth(method = "lm", se = FALSE) +
+  geom_jitter() +
+  labs(
+    x = "Year (2000-2019)",
+    y = "Total Unemployment By Region",
+    shape = "Year",
+    title = "Total Unemployment in Region vs. Year (2000-2019)",
+    subtitle = "Linear Regression Model",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+
+# Non-Institutional Population 
+clean_unemployment %>%
+  filter(year >= 1980,
+         region %in% c('West', 'South','Midwest','Northeast')) %>% 
+  ggplot(aes(
+    y = total_civilian_non_institutional_population_in_state_area,
+    x = year,
+    color = region)) +
+  geom_point() +
+ #geom_smooth(method = "lm", se = FALSE) +
+  geom_jitter() +
+  labs(
+    x = "Year (2000-2019)",
+    y = "Total Non_Institutional Population in Region",
+    shape = "Year",
+    title = "Total Non-Institutional Population in Region vs. Year (2000-2019)",
+    subtitle = "Linear Regression Model",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal() 
+  
+```
+
+```{r}
+#| label: scatterplot with altered subsets to include non-institutional population
+
+sub_high_unemployment <- unemployment_high_unemployment %>%
+  group_by(region) %>%
+  mutate(
+    avg_labor_force = mean(
+      total_civilian_labor_force_in_state_area),
+    avg_unemployment = mean(total_unemployment_in_state_area))
+
+sub_low_unemployment <- unemployment_low_unemployment %>%
+  group_by(region) %>%
+  mutate(
+    avg_labor_force =
+      mean(total_civilian_labor_force_in_state_area),
+    avg_unemployment = mean(total_unemployment_in_state_area))
+
+sub_high_unemployment %>%
+  ggplot(aes(
+    x = ,
+    y = avg_unemployment,
+    color = region)) +
+  geom_boxplot() +
+  labs(
+    x = "Average Total Civilian Non-Insitutional Population in State Area",
+    y = "Average Total Unemployment in State Area",
+    title = "Average Total Unemployment in State Area vs. Average Total Civilian Non-Instituional Population in State Area",
+    subtitle = "Linear Regression Model",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+
+```
+
+
+#### Variable Relationships
+
+```{r}
+#| label: Correlation matrix 
+
+unemployment_subset <- clean_unemployment %>%
+  select(-state_area, -fips_code, -region, -year)
+
+cor_matrix <- cor(unemployment_subset)
+
+unemployment_subset %>% 
+  cor() %>% 
+  as_tibble() %>% 
+  pivot_longer(cols = everything()) %>% 
+  filter(value != 1) %>% 
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 20) +
+  facet_wrap(~name, scales = "free") +
+  labs(
+    x = "Correlation",
+    y = "Count",
+    title = "Correlation Distribution",
+    subtitle = "Histogram",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+```
+
+
+
+```{r}
+ library(GGally)
+#| label: pair plot visual
+
+unemployment_sub <- clean_unemployment %>%
+  select(percent_of_state_area_s_population,
+         percent_of_labor_force_employed_in_state_area,
+         percent_of_labor_force_unemployed_in_state_area,
+         percentage_change) %>%
+  sample_n(300)
+
+pair_plot <- unemployment_sub %>%
+  ggpairs(ggplot2::aes(fill = "purple")) +
+  labs(
+    x = "Correlation",
+    y = "Count",
+    title = "Correlation Distribution",
+    subtitle = "Scatterplot Matrix",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+
+pair_plot
+
+unemployment_sub_2 <- clean_unemployment %>%
+  select(percent_of_state_area_s_population,
+         percent_of_labor_force_employed_in_state_area,
+        ) %>%
+  sample_n(300)
+
+pair_plot_2 <- unemployment_sub_2 %>%
+  ggpairs(ggplot2::aes(fill = "purple")) +
+  labs(
+    x = "Correlation",
+    y = "Count",
+    title = "Correlation Distribution",
+    subtitle = "Scatterplot Matrix",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+
+pair_plot_2
+
+unemployment_sub_3 <- clean_unemployment %>%
+  select(percent_of_state_area_s_population,
+         percent_of_labor_force_unemployed_in_state_area,
+        ) %>%
+  sample_n(300)
+
+pair_plot_3 <- unemployment_sub_3 %>%
+  ggpairs(ggplot2::aes(fill = "purple")) +
+  labs(
+    x = "Correlation",
+    y = "Count",
+    title = "Correlation Distribution",
+    subtitle = "Scatterplot Matrix",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+
+pair_plot_3
+
+unemployment_sub_4 <- clean_unemployment %>%
+  select(percent_of_labor_force_unemployed_in_state_area,
+         percentage_total_civilian_non_institutional_pop,
+        ) %>%
+  sample_n(300)
+
+pair_plot_4 <- unemployment_sub_4 %>%
+  ggpairs(ggplot2::aes(fill = "purple")) +
+  labs(
+    x = "Correlation",
+    y = "Count",
+    title = "Correlation Distribution",
+    subtitle = "Scatterplot Matrix",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+
+pair_plot_4
+
+#unemployment_sub_5 <- clean_unemployment %>%
+  #select(percent_of_labor_force_employed_in_state_area,
+         #percentage_total_civilian_non_institutional_pop,
+       # ) %>%
+  #sample_n(300)
+
+#pair_plot_5 <- unemployment_sub_5 %>%
+  #ggpairs(ggplot2::aes(fill = "purple")) +
+  #labs(
+    #x = "Correlation",
+    #y = "Count",
+    #title = "Correlation Distribution",
+    #subtitle = "Scatterplot Matrix",
+    #caption = "Data from the Bureau of Labor Statistics") +
+  #theme_minimal()
+
+#pair_plot_5
+
+unemployment_sub_6 <- clean_unemployment %>%
+  select(percent_of_state_area_s_population,
+         percentage_change,
+        ) %>%
+  sample_n(300)
+
+pair_plot_6 <- unemployment_sub_6 %>%
+  ggpairs(ggplot2::aes(fill = "purple")) +
+  labs(
+    x = "Correlation",
+    y = "Count",
+    title = "Correlation Distribution",
+    subtitle = "Scatterplot Matrix",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+
+pair_plot_6
+
+unemployment_sub_7 <- clean_unemployment %>%
+  select(percent_of_labor_force_employed_in_state_area,
+         percent_of_labor_force_unemployed_in_state_area,
+        ) %>%
+  sample_n(300)
+
+pair_plot_7 <- unemployment_sub_7 %>%
+  ggpairs(ggplot2::aes(fill = "purple")) +
+  labs(
+    x = "Correlation",
+    y = "Count",
+    title = "Correlation Distribution",
+    subtitle = "Scatterplot Matrix",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+
+pair_plot_7
+#Better correlation than the others
+unemployment_sub_8 <- clean_unemployment %>%
+  select(year,
+         percent_of_labor_force_employed_in_state_area,
+        ) %>%
+  sample_n(300)
+
+pair_plot_8 <- unemployment_sub_8 %>%
+  ggpairs(ggplot2::aes(fill = "purple")) +
+  labs(
+    x = "Correlation",
+    y = "Count",
+    title = "Correlation Distribution",
+    subtitle = "Scatterplot Matrix",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+
+pair_plot_8
+# Correlation is negative but skewed left, like non-institutional population
+unemployment_sub_9 <- clean_unemployment %>%
+  select(year,
+         percent_of_labor_force_unemployed_in_state_area,
+        ) %>%
+  sample_n(300)
+
+pair_plot_9 <- unemployment_sub_9 %>%
+  ggpairs(ggplot2::aes(fill = "purple")) +
+  labs(
+    x = "Correlation",
+    y = "Count",
+    title = "Correlation Distribution",
+    subtitle = "Scatterplot Matrix",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+
+pair_plot_9
+```
+
+#### Predictor-Response Relationships
+
+```{r}
+#| label: Regression plots for each predictor-response relationship to understand their association
+
+unemployment_sub <- clean_unemployment %>%
+  select(percent_of_state_area_s_population,
+         percent_of_labor_force_employed_in_state_area,
+         percent_of_labor_force_unemployed_in_state_area,
+         total_unemployment_in_state_area,
+         total_civilian_labor_force_in_state_area,
+         percentage_total_civilian_non_institutional_pop
+         ) %>%
+  sample_n(300)
+
+unemployment_sub %>%
+  ggplot(mapping = aes(
+    x = percent_of_state_area_s_population,
+    y = total_unemployment_in_state_area)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    x = "Percent of State Area's Population",
+    y = "Total Unemployment in State Area",
+    title = "Total Unemployment in State Area vs. Percent of State Area's Population",
+    subtitle = "Linear Regression Model 1",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+
+unemployment_sub %>%
+  ggplot(mapping = aes(
+    x = percent_of_labor_force_employed_in_state_area,
+    y = total_unemployment_in_state_area)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    x = "Percent of Labor Force Employed in State Area",
+    y = "Total Unemployment in State Area",
+    title = "Total Unemployment in State Area vs. Percent of Labor Force Employed in State Area",
+    subtitle = "Linear Regression Model 2",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+
+unemployment_sub %>%
+  ggplot(mapping = aes(
+    x = percent_of_labor_force_unemployed_in_state_area,
+    y = total_civilian_labor_force_in_state_area)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    x = "Percent of Labor Force Unemployed in State Area",
+    y = "Total Civilian Labor Force in State Area",
+    title = "Total Civilian Labor Force in State Area vs. Percent of Labor Force Unemployed in State Area",
+    subtitle = "Linear Regression Model 3",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+
+# Despite the correlation above in the pair plots, there does seem to be a positive relationship between the two variables. Unemployment and the Population in prison are both increasing over time.
+unemployment_sub %>%
+  ggplot(aes(
+    x = percentage_total_civilian_non_institutional_pop,
+    y = total_unemployment_in_state_area)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    x = "Percentage of Total Civilian Non-Institutional Population",
+    y = "Total Unemployment in State Area",
+    title = "Total Unemployment in State Area vs. Percentage of Total Civilian Non-Institutional Population",
+    subtitle = "Linear Regression Model 4",
+    caption = "Data from the Bureau of Labor Statistics") 
+  
+```
+ Model 4 shows a positive and significant relationship between non-institutional population and unemployment. This is a good sign for our model, as it shows that the data is not random and that there is a relationship between the variables. Policies that are related to the non-institutional population can be related to unemployment, and it is important to understand the size of both populations, in order for policymakers to assess the impact of their initiatives on a much broader scale. Both populations defined show the potential of the size of the labor force, if all were to be employed.
+
+###### Top States with the Highest Unemployment Rate by Year and Comparison of Non-Institutional Population rates by the same Year
+```{r}
+#| label: top 5 states with the highes unemployment rate by year, along with comparison of non-institutional population
+top_5_states <- unemployment %>%
+  group_by(year, state_area) %>%
+  summarize(
+    max_unemployment = max(percent_of_labor_force_unemployed_in_state_area),
+    max_labor_force = max(percent_of_labor_force_employed_in_state_area),
+  ) %>%
+  arrange(desc(max_unemployment))
+
+print(top_5_states)
+
+#| label: percent of unemployed labor force and non-institutional population by year. 
+#| 
+mu_unemployment_sd <- clean_unemployment %>%
+  group_by(year, region) %>%
+  summarize(across(c(percent_of_labor_force_unemployed_in_state_area),
+            list(mu = ~ mean(.), sigma = ~ sd(.)))) %>%
+  arrange(desc(percent_of_labor_force_unemployed_in_state_area_mu))
+
+print(mu_unemployment_sd)
+
+```
+
+####### Time Series Analysis of Percdentage Change in Unemployment Rate by Year
+```{r}
+#| label: ggplot for top 5 states with mu and sd of unemployment rate by year
+
+ggplot(mu_unemployment_sd, aes(x = year, y = percent_of_labor_force_unemployed_in_state_area_mu)) +
+  geom_point() +
+  geom_line() +
+  geom_errorbar(aes(ymin = percent_of_labor_force_unemployed_in_state_area_mu - percent_of_labor_force_unemployed_in_state_area_sigma,
+                    ymax = percent_of_labor_force_unemployed_in_state_area_mu + percent_of_labor_force_unemployed_in_state_area_sigma),
+                width = 0.2) +
+  facet_wrap(~region, ncol = 2) +
+  labs(
+    x = "Year",
+    y = "Percent of Labor Force Unemployed By Region",
+    title = "Percent of Labor Force Unemployed in Region By Year",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+
+```
+
+###### Top States With The Percentage Change in  Unemployment Rate by Year
+
+```{r}
+#| label: pull the positive values from the percentage change column along with year and state area to see which years had an increase in unemployment
+
+increase_unemployment_year <- clean_unemployment %>%
+  filter(percentage_change > 0) %>%
+  select(year, state_area, percentage_change) %>%
+  arrange(desc(percentage_change))
+
+#label: ggplot showing increase of unemployment over time
+
+ggplot(increase_unemployment_year, aes(x = year, y = percentage_change, color = state_area)) +
+ geom_line()+
+  labs(
+    x = "Year",
+    y = "Percentage Change",
+    title = "Percentage Change in Unemployment Rate by Year",
+    subtitle = "Top States with the Highest Percentage Change in Unemployment Rate",
+    caption = "Data from the Bureau of Labor Statistics") +
+  theme_minimal()
+```
+
+#### Brief Expected Conclusions and Models/Techniques to be Used
+The goal of this project is to determine if there is a relationship between unemployment, the percentage of change in unemployment (whether negative or positive), and how these changes are represented nationally given certain years. I will be using linear regression to determine if there is a relationship between the two variables. I will also be using a time series analysis to determine if there is a relationship between the two variables over time. I will be using the data from the Bureau of Labor Statistics and the Bureau of Justice Statistics to determine the unemployment rate and the data from the Bureau of Justice Statistics to determine the prison population. 
+
+## Preliminary Results
+#### Model Selection
+Model fit for chosen data sets, to get a 'sense' of the problem. Followed by what is believed to be the best model to refine and test original hypothesis, data analysis and exploration through plots.
+
+###### Split and Test Various Data Sets
+```{r}
+#| label: model fit for chosen data sets
+set.seed(93422)
+
+unemployment_split <- clean_unemployment %>% 
+  initial_split(prop = 0.9)
+
+unemployment_train <- unemployment_split %>% training()
+unemployment_test <- unemployment_split %>% testing()
+
+dim(clean_unemployment)
+
+dim(unemployment_train)
+
+dim(unemployment_test)
+
+```
+
+```{r}
+#|label: fit the models for training data
+
+lr_mod <- linear_reg() %>% 
+  set_engine("lm") %>% 
+  set_mode("regression")
+```
+
+
+```{r}
+#| label: model fit for testing data/total unemployment in state area
+
+unemployment_lm1 <- lr_mod %>%
+  fit(year ~ percentage_change, data = unemployment_train)
+
+unemployment_lm2 <- lr_mod %>%
+  fit(year ~ poly(percentage_change, 2), data = unemployment_train)
+
+unemployment_test <- unemployment_test %>%
+  mutate(
+    pred_1 = predict(unemployment_lm1,
+                     new_data= unemployment_test,
+                     type = "raw"),
+    pred_2 = predict(unemployment_lm2, 
+                     new_data = unemployment_test,
+                     type = "raw")
+  )
+
+unemployment_test %>%
+  rmse(truth = percentage_change, estimate = pred_1)
+
+unemployment_test %>%
+  rmse(truth = percentage_change, estimate = pred_2)
+  
+```
+
+
+```{r}
+#| label: second set of data. percent of labor force unemployed in state area
+
+unemployment_lm1 <- lr_mod %>%
+  fit(year ~ percent_of_labor_force_unemployed_in_state_area, data = unemployment_train)
+
+unemployment_lm2 <- lr_mod %>%
+  fit(year ~ poly(percent_of_labor_force_unemployed_in_state_area, 2), data = unemployment_train)
+
+unemployment_test %>%
+  rmse(truth = percent_of_labor_force_unemployed_in_state_area, estimate = pred_1)
+
+unemployment_test %>%
+  rmse(truth = percent_of_labor_force_unemployed_in_state_area, estimate = pred_2)
+
+```
+
+####### Cross Validation and KNN Model
+```{r}
+set.seed(1234)
+cvs <- vfold_cv(clean_unemployment, v = 5, strata = region)
+
+cvs_recipe <- recipe(region ~ ., data = clean_unemployment) %>%
+  step_rm(state_area) %>%
+  step_normalize(all_predictors())
+
+cvs_recipe
+
+
+knn_mod <- nearest_neighbor(neighbors = 5) %>%
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+knn_wflow <- workflow() %>%
+  add_recipe(cvs_recipe) %>%
+  add_model(knn_mod)
+
+knn_fit <- knn_wflow %>%
+  fit_resamples(cvs)
+```
+
+```{r}
+#| label: fit model for KNN
+
+knn_fit <- knn_wflow %>%
+  fit_resamples(cvs, 
+                metrics = metric_set(roc_auc, accuracy, precision))
+
+knn_fit %>%
+  collect_metrics()
+```
+I tried various folds to make sure the model was not overfitting. I also tried various neighbors to see which one would give me the best results. I found that the model was not overfitting and that the best number of neighbors was 5. I also found that the model did not overfit when I used the percentage change in unemployment rate and the percent of labor force unemployed in state area. 
+
+# Use tidyModels textbook to check the prediction with original value of particular columns. 
+
+### Predictive Models
+
+```{r}
+#|label: Decision Tree Model
+max_depth <- 5
+set.seed(93422)
+
+tree_mod <- decision_tree(tree_depth = max_depth) %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+tree_wflow <- workflow() %>%
+  add_recipe(cvs_recipe) %>%
+  add_model(tree_mod)
+```
+
+```{r}
+#|label: tree fit
+
+tree_fit <- tree_wflow %>%
+  fit_resamples(
+    cvs, metrics = metric_set(accuracy, roc_auc, precision)
+    )
+
+tree_fit_results <- tree_wflow %>%
+  fit(clean_unemployment)
+```
+
+```{r}
+#|label: Inspect the fit of the tree model
+
+tree_fitted <- tree_fit_results %>%
+  extract_fit_parsnip()
+
+rpart.plot(tree_fitted$fit)
+```
+
+
+```{r}
+#| label: cost complexity pruning
+
+tune_grid <- grid_regular(
+  cost_complexity(),
+  tree_depth(range = c(1, 5)),
+  min_n(range = c(5, 20)),
+  levels = 2)
+
+tune_grid
+
+```
+
+
+```{r}
+#| label: tree model with tuning
+
+tree_mod <- decision_tree(cost_complexity = tune(),
+                          tree_depth = tune(),
+                          min_n = tune()) %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+tree_wflow <- workflow() %>%
+  add_recipe(cvs_recipe) %>%
+  add_model(tree_mod)
+
+tree_grid_search <- 
+  tune_grid(
+    tree_wflow,
+    resamples = cvs,
+    grid = tune_grid
+  )
+
+tuning_metrics <- tree_grid_search %>%
+  collect_metrics()
+```
+
+```{r}
+#| label: tuning
+best_accuracy <- tuning_metrics %>%
+  filter(.metric == "accuracy") %>%
+  slice_max(mean)
+
+best_roc_auc <- tuning_metrics %>%
+  filter(.metric == "roc_auc") %>%
+  slice_max(mean)
+
+best_accuracy
+best_roc_auc
+
+```
+
+```{r}
+#| label: best tree model
+
+
+```
+
+
+```{r}
+#| label: Find the classification error
+
+rpart.plot(tree_fitted$fit,
+           roundint = FALSE,
+           cex = 0.3)
+
+```
+```{r}
+
+```
+
+
+
+## Final Conclusions of Analysis
+
+
+
+
+
+
+
+
+
+
+
+## References
+
